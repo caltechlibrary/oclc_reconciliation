@@ -126,13 +126,13 @@ func Match(target, source *Record) bool {
 }
 
 func Merge(target, source *Record) *Record {
-	if target.Tind == "" {
-		target.Tind = source.Tind
+	if source.Tind == "" {
+		source.Tind = target.Tind
 	}
-	if target.OCLC == "" {
-		target.OCLC = source.OCLC
+	if source.OCLC == "" {
+		source.OCLC = target.OCLC
 	}
-	return target
+	return source
 }
 
 func Scan(target *Record, columnNames []string, table [][]string) string {
