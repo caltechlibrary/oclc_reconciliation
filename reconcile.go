@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
 	// Caltech Library Packages
 	"github.com/caltechlibrary/datatools"
 )
@@ -93,6 +92,22 @@ func mkTable(src []byte) ([][]string, error) {
 	return table, nil
 }
 
+func mkRecords(src []byte, columnNames []string) ([]*Record, error) {
+	table, err := mkTable(src)
+	if err != nil {
+		return nil, err
+	}
+	records := []*Record{}
+	for i, row := range table {
+		//NOTE: We need to skip the header row
+		if i > 0 {
+			rec := RowToRecord(columnNames, row)
+			records = append(records, rec)
+		}
+	}
+	return records, nil
+}
+
 func countTrue(booleans ...bool) int {
 	cnt := 0
 	for _, val := range booleans {
@@ -103,24 +118,36 @@ func countTrue(booleans ...bool) int {
 	return cnt
 }
 
-func Match(target, source *Record) bool {
-	// Try simple match strings where we trim lead/trailing spaces
-	if strings.TrimSpace(target.Title) == strings.TrimSpace(source.Title) &&
-		countTrue((target.MaterialType == source.MaterialType), (target.MonoOrSerial == source.MonoOrSerial),
-			(target.Date1 == source.Date1), (target.Date2 == source.Date2), (target.Form == source.Form),
-			(target.ISBN == source.ISBN), (target.ISSN == source.ISSN), (target.Publisher == source.Publisher),
-			(target.Year == source.Year)) > 5 {
-		return true
-	}
-	// FIXME: Try comparing with stop words removed
+func Match(target, source *Record, withLevenshtein bool) bool {
+	if withLevenshtein == true {
+		// Finally try using the Levenshtein approximate match without case sensitivety
+		if datatools.Levenshtein(target.Title, source.Title, 1, 1, 1, false) <= 1 &&
+			countTrue((target.MaterialType == source.MaterialType), (target.MonoOrSerial == source.MonoOrSerial),
+				(target.Date1 == source.Date1), (target.Date2 == source.Date2), (target.Form == source.Form),
+				(target.ISBN == source.ISBN), (target.ISSN == source.ISSN), (target.Publisher == source.Publisher),
+				(target.Year == source.Year)) > 5 {
+			return true
+		}
+	} else {
+		// Try simple unaltered string match
+		if target.Title == source.Title &&
+			countTrue((target.MaterialType == source.MaterialType), (target.MonoOrSerial == source.MonoOrSerial),
+				(target.Date1 == source.Date1), (target.Date2 == source.Date2), (target.Form == source.Form),
+				(target.ISBN == source.ISBN), (target.ISSN == source.ISSN), (target.Publisher == source.Publisher),
+				(target.Year == source.Year)) > 5 {
+			return true
+		}
 
-	// Finally try using the Levenshtein approximate match
-	if datatools.Levenshtein(target.Title, source.Title, 1, 1, 1, true) == 1 &&
-		countTrue((target.MaterialType == source.MaterialType), (target.MonoOrSerial == source.MonoOrSerial),
-			(target.Date1 == source.Date1), (target.Date2 == source.Date2), (target.Form == source.Form),
-			(target.ISBN == source.ISBN), (target.ISSN == source.ISSN), (target.Publisher == source.Publisher),
-			(target.Year == source.Year)) > 5 {
-		return true
+		// FIXME: Try comparing with stop words removed
+
+		// Try simple match strings where we trim lead/trailing spaces
+		if strings.TrimSpace(target.Title) == strings.TrimSpace(source.Title) &&
+			countTrue((target.MaterialType == source.MaterialType), (target.MonoOrSerial == source.MonoOrSerial),
+				(target.Date1 == source.Date1), (target.Date2 == source.Date2), (target.Form == source.Form),
+				(target.ISBN == source.ISBN), (target.ISSN == source.ISSN), (target.Publisher == source.Publisher),
+				(target.Year == source.Year)) > 5 {
+			return true
+		}
 	}
 	return false
 }
@@ -135,15 +162,11 @@ func Merge(target, source *Record) *Record {
 	return source
 }
 
-func Scan(target *Record, columnNames []string, table [][]string) string {
+func Scan(target *Record, sources []*Record, withLevenshtein bool) string {
 	matched := []*Record{}
-	for i, row := range table {
-		//NOTE: We skip the header row
-		if i > 0 {
-			source := RowToRecord(columnNames, row)
-			if Match(target, source) == true {
-				matched = append(matched, Merge(target, source))
-			}
+	for _, source := range sources {
+		if Match(target, source, withLevenshtein) == true {
+			matched = append(matched, Merge(target, source))
 		}
 	}
 	mCnt := len(matched)
@@ -162,14 +185,14 @@ func Scan(target *Record, columnNames []string, table [][]string) string {
 func main() {
 	var (
 		oclcColumns = []string{
-			"material type",
+			"material type", // 0
 			"mono or serial",
 			"date1",
 			"date2",
-			"form",
+			"form", // 4
 			"isbn",
 			"issn",
-			"oclc",
+			"oclc", // 7
 			"title",
 			"subtitle",
 			"author",
@@ -179,13 +202,13 @@ func main() {
 		}
 
 		tindColumns = []string{
-			"material type",
+			"material type", // 0
 			"mono or serial",
 			"date1",
 			"date2",
-			"form",
+			"form", // 4
 			"tind",
-			"oclc",
+			"oclc", // 6
 			"isbn",
 			"issn",
 			"title",
@@ -196,6 +219,7 @@ func main() {
 			"pagination",
 		}
 	)
+
 	percentage := func(x, y int) string {
 		if y != 0 {
 			f := (float64(x) / float64(y)) * 100.0
@@ -203,8 +227,8 @@ func main() {
 		}
 		return "0%"
 	}
-	startT := time.Now()
 
+	startT := time.Now()
 	oclcSrc, err := ioutil.ReadFile("data/rerun-oclc-all.csv")
 	if err != nil {
 		log.Fatal("Can't read data/rerun-oclc-all.csv, %s", err)
@@ -216,14 +240,14 @@ func main() {
 	}
 	log.Printf("Read in data/rerun-tind-all.csv, running time %s", time.Now().Sub(startT))
 
-	oclc, err := mkTable(oclcSrc)
+	oclc, err := mkRecords(oclcSrc, oclcColumns)
 	if err != nil {
 		log.Fatal("Can't decode oclc CSV, %s", err)
 	}
-	oclcRowCnt := len(oclc)
-	log.Printf("oclc rows: %d, running time %s", oclcRowCnt, time.Now().Sub(startT))
+	oclcCnt := len(oclc)
+	log.Printf("oclc rows: %d, running time %s", oclcCnt, time.Now().Sub(startT))
 
-	tind, err := mkTable(tindSrc)
+	tind, err := mkRecords(tindSrc, tindColumns)
 	if err != nil {
 		log.Fatal("Can't decode tind CSV, %s", err)
 	}
@@ -232,24 +256,51 @@ func main() {
 	matchedCnt := 0
 	unmatchedCnt := 0
 	rec := new(Record)
+	// First pass will be of rows using Scan, the unmatched rows will then get scanned using separage Scan2
+	unmatched := []int{}
+	log.Printf("Running with simple title matching running time %s", time.Now().Sub(startT))
 	fmt.Fprintln(os.Stdout, rec.Header())
-	for i, row := range oclc {
-		if i > 1 {
-			rec = RowToRecord(oclcColumns, row)
-			if s := Scan(rec, tindColumns, tind); s != "" {
-				fmt.Fprintf(os.Stdout, "%s\n", s)
-				matchedCnt++
-			} else {
-				unmatchedCnt++
-			}
-			if (i % 100) == 0 {
-				t := time.Now()
-				log.Printf("%d matched, %d unmatched", matchedCnt, unmatchedCnt)
-				log.Printf("%d (%s) rows processed in OCLC CSV, batch time %s, running time %s",
-					i, percentage(i, oclcRowCnt), t.Sub(filterT), t.Sub(startT))
-				filterT = t
-			}
+	for i, rec := range oclc {
+		if s := Scan(rec, tind, false); s != "" {
+			fmt.Fprintf(os.Stdout, "%s\n", s)
+			matchedCnt++
+		} else {
+			unmatchedCnt++
+			unmatched = append(unmatched, i)
 		}
+		if (i % 100) == 0 {
+			t := time.Now()
+			log.Printf("%d matched, %d unmatched", matchedCnt, unmatchedCnt)
+			log.Printf("%d (%s) rows processed in OCLC CSV, batch time %s, running time %s",
+				i, percentage(i, oclcCnt), t.Sub(filterT), t.Sub(startT))
+			filterT = t
+		}
+	}
+	log.Printf("Running unmatched against Levenshtein title matching, running time %s", time.Now().Sub(startT))
+	unmatchedCnt = 0
+	missing := []int{}
+	phase2Cnt := len(unmatched)
+	for i, no := range unmatched {
+		rec := oclc[no]
+		if s := Scan(rec, tind, true); s != "" {
+			fmt.Fprintf(os.Stdout, "%s\n", s)
+			matchedCnt++
+		} else {
+			unmatchedCnt++
+			missing = append(missing, no)
+		}
+		if (i % 100) == 0 {
+			t := time.Now()
+			log.Printf("%d matched, %d unmatched", matchedCnt, unmatchedCnt)
+			log.Printf("%d (%s) rows processed in OCLC CSV, batch time %s, running time %s",
+				i, percentage(i, phase2Cnt), t.Sub(filterT), t.Sub(startT))
+			filterT = t
+		}
+	}
+	log.Printf("Generating unmatched list (match count 0), running time %s", time.Now().Sub(startT))
+	for i, no := range missing {
+		oclc.MatchCount = 0
+		fmt.Fprintf(os.Stdout, "%s\n", oclc[no].String())
 	}
 	log.Printf("Running time %s", time.Now().Sub(startT))
 }
