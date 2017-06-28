@@ -176,7 +176,7 @@ func Scan(target *Record, sources []*Record, withLevenshtein bool) string {
 			rec.MatchedCount = mCnt
 			s = append(s, rec.String())
 		}
-		log.Printf("Found %d matches for %q", mCnt, target.Title)
+		//log.Printf("Found %d matches for %q", mCnt, target.Title)
 		return strings.Join(s, "\n")
 	}
 	return ""
@@ -257,7 +257,6 @@ func main() {
 	unmatchedCnt := 0
 	rec := new(Record)
 	// First pass will be of rows using Scan, the unmatched rows will then get scanned using separage Scan2
-	unmatched := []int{}
 	log.Printf("Running with simple title matching running time %s", time.Now().Sub(startT))
 	fmt.Fprintln(os.Stdout, rec.Header())
 	for i, rec := range oclc {
@@ -265,42 +264,17 @@ func main() {
 			fmt.Fprintf(os.Stdout, "%s\n", s)
 			matchedCnt++
 		} else {
+			rec.MatchedCount = 0
+			fmt.Fprintf(os.Stdout, "%s\n", rec.String())
 			unmatchedCnt++
-			unmatched = append(unmatched, i)
 		}
 		if (i % 100) == 0 {
 			t := time.Now()
 			log.Printf("%d matched, %d unmatched", matchedCnt, unmatchedCnt)
-			log.Printf("%d (%s) rows processed in OCLC CSV, batch time %s, running time %s",
-				i, percentage(i, oclcCnt), t.Sub(filterT), t.Sub(startT))
+			log.Printf("%d/%d (%s) rows processed in OCLC CSV, batch time %s, running time %s",
+				i, oclcCnt, percentage(i, oclcCnt), t.Sub(filterT), t.Sub(startT))
 			filterT = t
 		}
-	}
-	log.Printf("Running unmatched against Levenshtein title matching, running time %s", time.Now().Sub(startT))
-	unmatchedCnt = 0
-	missing := []int{}
-	phase2Cnt := len(unmatched)
-	for i, no := range unmatched {
-		rec := oclc[no]
-		if s := Scan(rec, tind, true); s != "" {
-			fmt.Fprintf(os.Stdout, "%s\n", s)
-			matchedCnt++
-		} else {
-			unmatchedCnt++
-			missing = append(missing, no)
-		}
-		if (i % 100) == 0 {
-			t := time.Now()
-			log.Printf("%d matched, %d unmatched", matchedCnt, unmatchedCnt)
-			log.Printf("%d (%s) rows processed in OCLC CSV, batch time %s, running time %s",
-				i, percentage(i, phase2Cnt), t.Sub(filterT), t.Sub(startT))
-			filterT = t
-		}
-	}
-	log.Printf("Generating unmatched list (match count 0), running time %s", time.Now().Sub(startT))
-	for i, no := range missing {
-		oclc.MatchCount = 0
-		fmt.Fprintf(os.Stdout, "%s\n", oclc[no].String())
 	}
 	log.Printf("Running time %s", time.Now().Sub(startT))
 }
